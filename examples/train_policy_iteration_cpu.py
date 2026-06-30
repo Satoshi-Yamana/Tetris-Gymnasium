@@ -1,22 +1,8 @@
-"""Tabular policy iteration using the Tetris Gymnasium implementation.
-
-The full Tetris state space is too large for exact dynamic programming, so this
-example builds a tiny placement-level MDP on top of ``tetris_gymnasium.envs.Tetris``:
-
-- board size is reduced, defaulting to 4x4
-- the piece set is reduced to O and I
-- an action is a rotation plus a playable-board x position
-- after placement, the next piece is sampled uniformly from the reduced set
-
-The important bit is that board creation, padding, collision checks, rotations,
-piece projection, row clearing, and scoring are delegated to the real
-``Tetris`` environment.  Only state enumeration and policy iteration live here.
-"""
+"""Tabular policy iteration using the Tetris Gymnasium implementation."""
 
 from __future__ import annotations
 
 import argparse
-import copy
 import random
 import sys
 import time
@@ -30,6 +16,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tetris_gymnasium.components.tetromino import Tetromino
 from tetris_gymnasium.envs import Tetris
+
+# --- 共通ユーティリティからのインポート ---
+from small_tetris_utils import rotated_piece, hard_drop_y
 
 
 BoardKey = tuple[int, ...]
@@ -64,18 +53,7 @@ PIECE_NAMES = ("O", "T")
 def make_reduced_tetrominoes() -> list[Tetromino]:
     """Return fresh, un-offset pieces for Tetris.__init__ to preprocess."""
     return [
-        Tetromino(
-            0, 
-            [0, 0, 240],  # Jミノの一般的な色（青）
-            np.array(
-                [
-                    [1, 0, 0],
-                    [1, 1, 1],
-                    [0, 0, 0],
-                ],
-                dtype=np.uint8,
-            )
-        ),
+        Tetromino(0, [240, 240, 0], np.array([[1, 1], [1, 1]], dtype=np.uint8)),
         Tetromino(
             1,
             [128, 0, 128],
@@ -121,23 +99,6 @@ def all_actions(config: PolicyIterationConfig) -> tuple[Action, ...]:
     return tuple((rotation, x) for rotation in range(4) for x in range(config.width))
 
 
-def rotated_piece(env: Tetris, piece_id: int, rotation: int) -> Tetromino:
-    piece = copy.copy(env.tetrominoes[piece_id])
-    for _ in range(rotation % 4):
-        piece = env.rotate(piece)
-    return piece
-
-
-def hard_drop_y(env: Tetris, piece: Tetromino, x: int) -> int | None:
-    if env.collision(piece, x, 0):
-        return None
-
-    y = 0
-    while not env.collision(piece, x, y + 1):
-        y += 1
-    return y
-
-
 def legal_actions_for_state(
     env: Tetris,
     state: State,
@@ -148,7 +109,8 @@ def legal_actions_for_state(
 
     legal = []
     for action_id, (rotation, x_playable) in enumerate(actions):
-        piece = rotated_piece(env, piece_id, rotation)
+        # 共通関数の呼び出し
+        piece = rotated_piece(env, env.tetrominoes[piece_id], rotation)
         x = env.padding + x_playable
         if hard_drop_y(env, piece, x) is not None:
             legal.append(action_id)
@@ -174,7 +136,8 @@ def transition_board_and_reward(
     rotation, x_playable = action
     env.board = key_to_board(env, board_key)
 
-    piece = rotated_piece(env, piece_id, rotation)
+    # 共通関数の呼び出し
+    piece = rotated_piece(env, env.tetrominoes[piece_id], rotation)
     x = env.padding + x_playable
     y = hard_drop_y(env, piece, x)
     if y is None:
@@ -350,7 +313,8 @@ def render_board(
 
     if piece_id is not None and action is not None:
         rotation, x_playable = action
-        piece = rotated_piece(env, piece_id, rotation)
+        # 共通関数の呼び出し
+        piece = rotated_piece(env, env.tetrominoes[piece_id], rotation)
         x = env.padding + x_playable
         y = hard_drop_y(env, piece, x)
         if y is not None:
@@ -379,8 +343,8 @@ def rollout(
     max_steps: int,
     seed: int,
     render_first_episode: bool,
-    render_mode: str,  # 👈 追加
-    delay: float,      # 👈 追加
+    render_mode: str,
+    delay: float,
 ) -> list[float]:
     rng = random.Random(seed)
     state_to_index = {state: index for index, state in enumerate(states)}
@@ -407,8 +371,9 @@ def rollout(
             if render_first_episode and episode == 0:
                 # 描画用環境に状態を同期
                 render_env.board = key_to_board(render_env, board_key)
+                # 共通関数の呼び出し
                 render_env.active_tetromino = rotated_piece(
-                    render_env, active_piece_id, 0
+                    render_env, render_env.tetrominoes[active_piece_id], 0
                 )
 
                 # モードによって描写方法を変える
@@ -525,8 +490,8 @@ def main() -> None:
         max_steps=args.max_steps,
         seed=args.seed,
         render_first_episode=args.render_first_episode,
-        render_mode=args.render_mode,  # 追加
-        delay=args.delay,              # 追加
+        render_mode=args.render_mode,
+        delay=args.delay,
     )
 
     start_values = [
